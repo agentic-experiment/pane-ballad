@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pane Ballad</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #06080f; color: #f2e6cd;
+    font-family: Georgia, "Times New Roman", serif;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+
+  #hud {
+    position: fixed; inset: 0 0 auto 0;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 20px 26px; pointer-events: none; user-select: none;
+  }
+  .label {
+    font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase;
+    opacity: 0.62;
+  }
+  .big { font-size: 30px; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .sub {
+    margin-top: 6px; font-size: 13px; letter-spacing: 0.16em;
+    opacity: 0.75; font-style: italic;
+  }
+  .mid { text-align: center; }
+  .right { text-align: right; }
+
+  #bar {
+    position: fixed; top: 86px; left: 50%; transform: translateX(-50%);
+    width: min(420px, 62vw); height: 3px; border-radius: 2px;
+    background: rgba(255,255,255,0.12); overflow: hidden;
+  }
+  #radiance-fill {
+    height: 100%; width: 100%;
+    background: linear-gradient(90deg, #d9a45b, #f6e3b4);
+    box-shadow: 0 0 12px rgba(246,227,180,0.55);
+    transition: width 0.25s ease;
+  }
+
+  #overlay {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 24px;
+    background: radial-gradient(ellipse at center, rgba(12,16,36,0.70), rgba(6,8,18,0.94));
+  }
+  #overlay.hidden { display: none; }
+
+  h1 {
+    margin: 0 0 10px; font-weight: 400;
+    font-size: clamp(38px, 9vw, 84px); letter-spacing: 0.12em;
+    background: linear-gradient(180deg, #fff4dc, #e2b56a 55%, #a97b3c);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 34px rgba(226,181,106,0.28));
+  }
+  .tag {
+    margin: 0 0 30px; font-size: 15px; letter-spacing: 0.2em;
+    opacity: 0.8; font-style: italic;
+  }
+  .keys { display: flex; gap: 12px; margin-bottom: 18px; }
+  .keys span {
+    width: 54px; height: 54px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(232,201,135,0.5); border-radius: 10px;
+    background: rgba(232,201,135,0.08); font-size: 19px; letter-spacing: 0.06em;
+  }
+  .hint {
+    margin: 0 0 30px; font-size: 12.5px; letter-spacing: 0.14em; opacity: 0.55;
+    max-width: 460px; line-height: 1.9;
+  }
+  button {
+    font: inherit; font-size: 15px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: #f6e3b4; background: transparent;
+    border: 1px solid rgba(232,201,135,0.65); border-radius: 999px;
+    padding: 15px 34px; cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+  }
+  button:hover {
+    background: rgba(232,201,135,0.12);
+    box-shadow: 0 0 32px rgba(232,201,135,0.25);
+  }
+  .final { margin: 0 0 30px; font-size: 15px; letter-spacing: 0.14em; opacity: 0.8; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div>
+    <div class="label">Pane Ballad</div>
+    <div class="sub" id="level">Movement I</div>
+  </div>
+  <div class="mid">
+    <div class="label">Score</div>
+    <div class="big" id="score">0</div>
+  </div>
+  <div class="right">
+    <div class="label">Best</div>
+    <div class="big" id="best">0</div>
+  </div>
+</div>
+<div id="bar"><div id="radiance-fill"></div></div>
+
+<div id="overlay">
+  <div id="intro">
+    <h1>Pane Ballad</h1>
+    <p class="tag">catch the falling light &nbsp;&middot;&nbsp; fill the window &nbsp;&middot;&nbsp; sing</p>
+    <div class="keys"><span>D</span><span>F</span><span>J</span><span>K</span></div>
+    <p class="hint">
+      strike a lane as its light crosses the sill &mdash; keys D F J K, arrows, 1&ndash;4, or click a lane<br>
+      every catch lights a pane and sounds a note; misses dim the window
+    </p>
+    <button id="start">Begin the Ballad</button>
+  </div>
+  <div id="outro" hidden>
+    <h1>The Light Fades</h1>
+    <p class="final" id="final"></p>
+    <button id="again">Sing Again</button>
+    <p class="hint" style="margin-top:26px">press R to begin again</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay');
+  const intro = document.getElementById('intro');
+  const outro = document.getElementById('outro');
+  const elScore = document.getElementById('score');
+  const elBest = document.getElementById('best');
+  const elLevel = document.getElementById('level');
+  const elFill = document.getElementById('radiance-fill');
+  const elFinal = document.getElementById('final');
+
+  const LANES = 4;
+  const ROWS = 6;
+  const LANE_KEYS = {
+    KeyD: 0, KeyF: 1, KeyJ: 2, KeyK: 3,
+    ArrowLeft: 0, ArrowDown: 1, ArrowUp: 2, ArrowRight: 3,
+    Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3
+  };
+  const SCALE = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24];
+
+  let W = 0, H = 0, dpr = 1;
+  const geom = { x: 0, y: 0, pw: 0, ph: 0, winW: 0, winH: 0, keelY: 0, spawnY: 0 };
+
+  const state = {
+    running: false,
+    over: false,
+    score: 0,
+    combo: 0,
+    best: Number(localStorage.getItem('pane-ballad-best') || 0),
+    level: 1,
+    radiance: 100,
+    lit: [0, 0, 0, 0],
+    panes: [],
+    notes: [],
+    parts: [],
+    rings: [],
+    flash: [0, 0, 0, 0],
+    spawnTimer: 0,
+    spawnEvery: 720,
+    travel: 2300,
+    pulse: 0,
+    time: 0
+  };
+
+  let AC = null, master = null;
+
+  function initAudio() {
+    if (AC) {
+      if (AC.state === 'suspended') AC.resume();
+      return;
+    }
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain();
+    master.gain.value = 0.22;
+    master.connect(AC.destination);
+    const bus = AC.createGain();
+    bus.gain.value = 0.055;
+    const lp = AC.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 480;
+    lp.connect(bus);
+    bus.connect(master);
+    [0, 7, 12].forEach((s) => {
+      const o = AC.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = 65.41 * Math.pow(2, s / 12);
+      o.connect(lp);
+      o.start();
+    });
+  }
+
+  function tone(freq, opts) {
+    if (!AC) return;
+    const o = opts || {};
+    const t = AC.currentTime + (o.delay || 0);
+    const dur = o.dur || 0.5;
+    const osc = AC.createOscillator();
+    const g = AC.createGain();
+    osc.type = o.type || 'triangle';
+    osc.frequency.setValueAtTime(freq, t);
+    if (o.glide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freq * o.glide), t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(o.gain || 0.22, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g);
+    g.connect(master);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
+  function freqOf(lane, row) {
+    const idx = Math.min(SCALE.length - 1, lane + row);
+    return 130.81 * Math.pow(2, SCALE[idx] / 12);
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.floor(W * dpr);
+    canvas.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const padTop = Math.max(92, H * 0.13);
+    const padBottom = Math.max(104, H * 0.15);
+    const availH = H - padTop - padBottom;
+    const availW = Math.min(W * 0.88, 620);
+    const pw = availW / LANES;
+    const ph = Math.min(pw * 1.32, availH / ROWS);
+    geom.pw = pw;
+    geom.ph = ph;
+    geom.winW = pw * LANES;
+    geom.winH = ph * ROWS;
+    geom.x = (W - geom.winW) / 2;
+    geom.y = padTop + (availH - geom.winH) * 0.28;
+    geom.keelY = geom.y + geom.winH + Math.min(70, H * 0.085);
+    geom.spawnY = geom.y - 34;
+  }
+
+  function paneRect(lane, row) {
+    const gap = Math.max(2, geom.pw * 0.035);
+    return {
+      x: geom.x + lane * geom.pw + gap,
+      y: geom.y + (ROWS - 1 - row) * geom.ph + gap,
+      w: geom.pw - gap * 2,
+      h: geom.ph - gap * 2
+    };
+  }
+
+  function makePanes() {
+    const base = (state.level * 47) % 360;
+    state.panes = [];
+    for (let l = 0; l < LANES; l++) {
+      state.panes[l] = [];
+      for (let r = 0; r < ROWS; r++) {
+        state.panes[l][r] = (base + l * 31 + r * 13) % 360;
+      }
+    }
+  }
+
+  function reset() {
+    state.score = 0;
+    state.combo = 0;
+    state.level = 1;
+    state.radiance = 100;
+    state.lit = [0, 0, 0, 0];
+    state.notes = [];
+    state.parts = [];
+    state.rings = [];
+    state.flash = [0, 0, 0, 0];
+    state.spawnTimer = 400;
+    state.spawnEvery = 720;
+    state.travel = 2300;
+    state.over = false;
+    makePanes();
+  }
+
+  function start() {
+    initAudio();
+    reset();
+    state.running = true;
+    overlay.classList.add('hidden');
+  }
+
+  function gameOver() {
+    state.running = false;
+    state.over = true;
+    if (state.score > state.best) {
+      state.best = state.score;
+      localStorage.setItem('pane-ballad-best', String(state.best));
+    }
+    elFinal.textContent =
+      'Score ' + state.score + '  ·  Best ' + state.best + '  ·  Movement ' + state.level;
+    intro.hidden = true;
+    outro.hidden = false;
+    overlay.classList.remove('hidden');
+    tone(82.4, { type: 'sine', dur: 1.7, gain: 0.12, glide: 0.55 });
+    tone(123.5, { type: 'triangle', dur: 1.9, gain: 0.06, delay: 0.14, glide: 0.55 });
+  }
+
+  function levelUp() {
+    state.level += 1;
+    state.lit = [0, 0, 0, 0];
+    makePanes();
+    state.spawnEvery = Math.max(310, state.spawnEvery * 0.9);
+    state.travel = Math.max(1050, state.travel * 0.92);
+    state.radiance = Math.min(100, state.radiance + 18);
+    state.rings.push({
+      x: geom.x + geom.winW / 2,
+      y: geom.y + geom.winH / 2,
+      r: 12,
+      maxR: Math.max(geom.winW, geom.winH) * 0.85,
+      life: 1,
+      hue: 42
+    });
+    [4, 7, 11].forEach((idx, k) => {
+      tone(130.81 * Math.pow(2, SCALE[idx] / 12), {
+        type: 'triangle', dur: 1.3, gain: 0.13, delay: k * 0.09
+      });
+    });
+  }
+
+  function burst(x, y, hue, count) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 0.035 + Math.random() * 0.22;
+      state.parts.push({
+        x: x,
+        y: y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 0.09,
+        life: 1,
+        maxLife: 420 + Math.random() * 460,
+        hue: hue,
+        size: 1.6 + Math.random() * 3.4
+      });
+    }
+  }
+
+  function hitWindow() {
+    return Math.max(46, geom.pw * 0.85);
+  }
+
+  function strike(lane) {
+    const win = hitWindow();
+    let best = null;
+    let bestD = Infinity;
+    for (const n of state.notes) {
+      if (n.lane !== lane || n.dead) continue;
+      const d = Math.abs(n.y - geom.keelY);
+      if (d < bestD) {
+        bestD = d;
+        best = n;
+      }
+    }
+    if (best && bestD <= win) {
+      const perfect = bestD <= win * 0.38;
+      best.dead = true;
+      state.combo += 1;
+      state.score += (perfect ? 150 : 100) + Math.min(60, state.combo * 3);
+      state.radiance = Math.min(100, state.radiance + (perfect ? 4.2 : 2.2));
+      state.flash[lane] = 1;
+      const cx = geom.x + lane * geom.pw + geom.pw / 2;
+      burst(cx, geom.keelY, best.hue, perfect ? 18 : 12);
+      if (perfect) {
+        state.rings.push({ x: cx, y: geom.keelY, r: 8, maxR: win * 1.9, life: 1, hue: best.hue });
+      }
+      const f = freqOf(lane, best.row);
+      tone(f, { type: 'triangle', dur: 0.72, gain: perfect ? 0.3 : 0.24 });
+      if (perfect) tone(f * 2, { type: 'sine', dur: 1.15, gain: 0.1 });
+      state.lit[lane] = Math.min(ROWS, state.lit[lane] + 1);
+      if (state.lit[0] + state.lit[1] + state.lit[2] + state.lit[3] >= LANES * ROWS) {
+        levelUp();
+      }
+    } else {
+      state.flash[lane] = 0.4;
+    }
+  }
+
+  function miss() {
+    state.combo = 0;
+    state.radiance = Math.max(0, state.radiance - 11);
+    tone(98, { type: 'sawtooth', dur: 0.22, gain: 0.07, glide: 0.55 });
+    if (state.radiance <= 0) gameOver();
+  }
+
+  function spawnNote() {
+    const pool = [0, 1, 2, 3];
+    const count = state.level >= 3 && Math.random() < 0.3 ? 2 : 1;
+    for (let k = 0; k < count; k++) {
+      const i = Math.floor(Math.random() * pool.length);
+      const lane = pool.splice(i, 1)[0];
+      let pending = 0;
+      for (const n of state.notes) {
+        if (n.lane === lane && !n.dead) pending += 1;
+      }
+      const row = Math.min(ROWS - 1, state.lit[lane] + pending);
+      state.notes.push({
+        lane: lane,
+        row: row,
+        hue: state.panes[lane][row],
+        y: geom.spawnY,
+        dead: false
+      });
+    }
+  }
+
+  function stepFx(dt) {
+    for (const p of state.parts) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 0.0009 * dt;
+      p.life -= dt / p.maxLife;
+    }
+    state.parts = state.parts.filter((p) => p.life > 0);
+    for (const r of state.rings) {
+      r.r += (r.maxR - r.r) * Math.min(1, dt / 260);
+      r.life -= dt / 540;
+    }
+    state.rings = state.rings.filter((r) => r.life > 0);
+  }
+
+  function update(dt) {
+    state.time += dt;
+    state.pulse = Math.max(0, state.pulse - dt / 320);
+    for (let i = 0; i < LANES; i++) {
+      state.flash[i] = Math.max(0, state.flash[i] - dt / 380);
+    }
+    stepFx(dt);
+    if (!state.running) return;
+
+    state.spawnTimer -= dt;
+    if (state.spawnTimer <= 0) {
+      spawnNote();
+      state.spawnTimer += state.spawnEvery;
+      state.pulse = 1;
+    }
+
+    const speed = (geom.keelY - geom.spawnY) / state.travel;
+    const win = hitWindow();
+    for (const n of state.notes) {
+      n.y += speed * dt;
+      if (!n.dead && n.y > geom.keelY + win * 1.6) {
+        n.dead = true;
+        miss();
+      }
+    }
+    state.notes = state.notes.filter((n) => !n.dead);
+  }
+
+  function drawHalo() {
+    const lit = state.lit[0] + state.lit[1] + state.lit[2] + state.lit[3];
+    const ratio = lit / (LANES * ROWS);
+    if (ratio <= 0) return;
+    const cx = geom.x + geom.winW / 2;
+    const cy = geom.y + geom.winH / 2;
+    const g = ctx.createRadialGradient(cx, cy, 10, cx, cy, geom.winH * 0.95);
+    g.addColorStop(0, 'rgba(255,205,150,' + (0.08 + ratio * 0.2) + ')');
+    g.addColorStop(1, 'rgba(255,205,150,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawWindow() {
+    for (let l = 0; l < LANES; l++) {
+      for (let r = 0; r < ROWS; r++) {
+        const rect = paneRect(l, r);
+        const hue = state.panes[l][r];
+        const lit = r < state.lit[l];
+        if (lit) {
+          const sh = 54 + Math.sin(state.time / 700 + l * 1.3 + r * 0.9) * 5;
+          ctx.fillStyle = 'hsla(' + hue + ',74%,' + sh + '%,0.94)';
+          ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+          const g = ctx.createRadialGradient(
+            rect.x + rect.w / 2, rect.y + rect.h / 2, 2,
+            rect.x + rect.w / 2, rect.y + rect.h / 2, Math.max(rect.w, rect.h) * 0.8
+          );
+          g.addColorStop(0, 'hsla(' + hue + ',90%,78%,0.5)');
+          g.addColorStop(1, 'hsla(' + hue + ',90%,78%,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        } else {
+          ctx.fillStyle = 'hsla(' + hue + ',32%,13%,1)';
+          ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+          const g = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
+          g.addColorStop(0, 'rgba(255,255,255,0.05)');
+          g.addColorStop(0.5, 'rgba(255,255,255,0)');
+          g.addColorStop(1, 'rgba(255,255,255,0.04)');
+          ctx.fillStyle = g;
+          ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        }
+      }
+    }
+
+    const bar = Math.max(4, geom.pw * 0.055);
+    ctx.save();
+    ctx.strokeStyle = '#241b14';
+    ctx.lineWidth = bar;
+    for (let l = 0; l <= LANES; l++) {
+      const x = geom.x + l * geom.pw;
+      ctx.beginPath();
+      ctx.moveTo(x, geom.y);
+      ctx.lineTo(x, geom.y + geom.winH);
+      ctx.stroke();
+    }
+    for (let r = 0; r <= ROWS; r++) {
+      const y = geom.y + r * geom.ph;
+      ctx.beginPath();
+      ctx.moveTo(geom.x, y);
+      ctx.lineTo(geom.x + geom.winW, y);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(214,168,110,0.32)';
+    ctx.lineWidth = Math.max(1, bar * 0.2);
+    for (let l = 0; l <= LANES; l++) {
+      const x = geom.x + l * geom.pw - bar * 0.22;
+      ctx.beginPath();
+      ctx.moveTo(x, geom.y);
+      ctx.lineTo(x, geom.y + geom.winH);
+      ctx.stroke();
+    }
+    for (let r = 0; r <= ROWS; r++) {
+      const y = geom.y + r * geom.ph - bar * 0.22;
+      ctx.beginPath();
+      ctx.moveTo(geom.x, y);
+      ctx.lineTo(geom.x + geom.winW, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = '#3b2c20';
+    ctx.lineWidth = bar * 1.9;
+    ctx.strokeRect(geom.x, geom.y, geom.winW, geom.winH);
+  }
+
+  function drawNotes() {
+    for (const n of state.notes) {
+      const cx = geom.x + n.lane * geom.pw + geom.pw / 2;
+      const cy = n.y;
+      const rad = geom.pw * 0.22;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad * 2.2);
+      g.addColorStop(0, 'hsla(' + n.hue + ',100%,88%,0.95)');
+      g.addColorStop(0.35, 'hsla(' + n.hue + ',95%,62%,0.5)');
+      g.addColorStop(1, 'hsla(' + n.hue + ',95%,60%,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      const t = ctx.createLinearGradient(cx, cy - rad * 3.8, cx, cy);
+      t.addColorStop(0, 'hsla(' + n.hue + ',90%,70%,0)');
+      t.addColorStop(1, 'hsla(' + n.hue + ',90%,72%,0.32)');
+      ctx.fillStyle = t;
+      ctx.fillRect(cx - rad * 0.42, cy - rad * 3.8, rad * 0.84, rad * 3.8);
+    }
+  }
+
+  function drawFlashes() {
+    for (let l = 0; l < LANES; l++) {
+      const f = state.flash[l];
+      if (f <= 0) continue;
+      const x = geom.x + l * geom.pw;
+      const top = geom.keelY - geom.ph * 2.2;
+      const h = geom.ph * 2.2 + 32;
+      const g = ctx.createLinearGradient(0, top, 0, geom.keelY + 32);
+      g.addColorStop(0, 'rgba(255,240,200,0)');
+      g.addColorStop(1, 'rgba(255,240,200,' + 0.2 * f + ')');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, top, geom.pw, h);
+    }
+  }
+
+  function drawKeel() {
+    const y = geom.keelY;
+    const gl = 0.35 + state.pulse * 0.65;
+    const g = ctx.createLinearGradient(geom.x - 48, 0, geom.x + geom.winW + 48, 0);
+    g.addColorStop(0, 'rgba(232,201,135,0)');
+    g.addColorStop(0.14, 'rgba(232,201,135,' + gl + ')');
+    g.addColorStop(0.86, 'rgba(232,201,135,' + gl + ')');
+    g.addColorStop(1, 'rgba(232,201,135,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(geom.x - 48, y - 1.5, geom.winW + 96, 3);
+
+    const gg = ctx.createRadialGradient(
+      geom.x + geom.winW / 2, y, 4,
+      geom.x + geom.winW / 2, y, geom.winW * 0.62
+    );
+    gg.addColorStop(0, 'rgba(246,227,180,' + (0.1 + state.pulse * 0.13) + ')');
+    gg.addColorStop(1, 'rgba(246,227,180,0)');
+    ctx.fillStyle = gg;
+    ctx.fillRect(geom.x - 70, y - 70, geom.winW + 140, 140);
+  }
+
+  function drawFx() {
+    for (const r of state.rings) {
+      ctx.strokeStyle = 'hsla(' + r.hue + ',85%,72%,' + 0.5 * r.life + ')';
+      ctx.lineWidth = 2 + 3 * r.life;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    for (const p of state.parts) {
+      ctx.fillStyle = 'hsla(' + p.hue + ',95%,72%,' + 0.85 * p.life + ')';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.4 + 0.6 * p.life), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function draw() {
+    const bg = ctx.createRadialGradient(W / 2, H * 0.42, 20, W / 2, H * 0.5, Math.max(W, H) * 0.75);
+    bg.addColorStop(0, '#141b38');
+    bg.addColorStop(0.55, '#0c1128');
+    bg.addColorStop(1, '#06080f');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    drawHalo();
+    drawWindow();
+    drawFlashes();
+    drawNotes();
+    drawKeel();
+    drawFx();
+
+    elScore.textContent = String(state.score);
+    elBest.textContent = String(Math.max(state.best, state.score));
+    elLevel.textContent = 'Movement ' + state.level;
+    elFill.style.width = state.radiance + '%';
+  }
+
+  window.addEventListener('resize', resize);
+
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (!state.running) {
+      if (e.code === 'KeyR' || e.code === 'Space' || e.code === 'Enter' ||
+          LANE_KEYS[e.code] !== undefined) {
+        e.preventDefault();
+        intro.hidden = false;
+        outro.hidden = true;
+        start();
+      }
+      return;
+    }
+    const lane = LANE_KEYS[e.code];
+    if (lane !== undefined) {
+      e.preventDefault();
+      strike(lane);
+    }
+  });
+
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (!state.running) return;
+    const lane = Math.max(0, Math.min(LANES - 1, Math.floor((e.clientX - geom.x) / geom.pw)));
+    strike(lane);
+  });
+
+  overlay.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (state.running) return;
+    intro.hidden = false;
+    outro.hidden = true;
+    start();
+  });
+
+  resize();
+  reset();
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(48, now - last);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
